@@ -23,3 +23,6 @@ Review links and content when a source or local SOP changes. Record the reviewer
 
 ## Data & privacy
 No backend, patient records or analytics were added. Saved benches use browser localStorage under `diagnosticmicro-atlas-saved-v3`. Trainer progress retains its original key. The CSF calculator performs arithmetic on fictional examples; it does not diagnose, correct traumatic taps or recommend treatment.
+
+## Release log
+- 15 October 2026: Atlas edition 03 deployed via GitHub main; Vercel Ready. Seven bench pathways, 21 media rows, eight cell schematics and ten references. Automated checks passed with original trainer checksums unchanged. Desktop smoke checks passed; mobile and print visual checks remain outstanding.
