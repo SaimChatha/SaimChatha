@@ -14,8 +14,36 @@
         {
           "key": "X-Content-Type-Options",
           "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "no-referrer"
         }
       ]
+    }
+  ],
+  "functions": {
+    "api/member.js": {
+      "includeFiles": "*.{html,js,css,svg}",
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/trainer",
+      "destination": "/api/member?asset=trainer/"
+    },
+    {
+      "source": "/trainer/:path*",
+      "destination": "/api/member?asset=trainer/:path*"
+    },
+    {
+      "source": "/atlas",
+      "destination": "/api/member?asset=atlas/"
+    },
+    {
+      "source": "/atlas/:path*",
+      "destination": "/api/member?asset=atlas/:path*"
     }
   ]
 }

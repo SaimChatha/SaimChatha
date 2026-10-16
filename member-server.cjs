@@ -1,0 +1,44 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path');
+const A='__Host-dm-access',R='__Host-dm-refresh';
+const files={'trainer/':'index.html','trainer/index.html':'index.html','trainer/app.js':'app.js','trainer/cases.js':'cases.js','trainer/styles.css':'styles.css','trainer/icon.svg':'icon.svg','atlas/':'atlas-index.html','atlas/index.html':'atlas-index.html','atlas/atlas.js':'atlas.js','atlas/data.js':'data.js','atlas/atlas.css':'atlas.css','atlas/icon.svg':'icon.svg'};
+function config(){return {url:process.env.SUPABASE_URL||process.env.NEXT_PUBLIC_SUPABASE_URL,key:process.env.SUPABASE_PUBLISHABLE_KEY||process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY||process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY};}
+function cookie(req,name){for(const part of (req.headers.cookie||'').split(';')){const i=part.indexOf('=');if(part.slice(0,i).trim()===name){try{return decodeURIComponent(part.slice(i+1));}catch{return '';}}}return '';}
+function cookies(res,s){res.setHeader('Set-Cookie',[[A,s?.access_token,s?Math.min(Number(s.expires_in)||3600,3600):0],[R,s?.refresh_token,s?604800:0]].map(([k,v,age])=>`${k}=${encodeURIComponent(v||'')}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${age}`));}
+function json(res,status,data){res.statusCode=status;res.setHeader('Content-Type','application/json; charset=utf-8');res.end(JSON.stringify(data));}
+async function auth(endpoint,body,token,method){const c=config();if(!c.url||!c.key)throw Error('unconfigured');const response=await fetch(c.url+'/auth/v1/'+endpoint,{method:method||(body?'POST':'GET'),headers:{apikey:c.key,'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(10000)});let data={};try{data=await response.json();}catch{}return {ok:response.ok,status:response.status,data};}
+async function session(req,res){let token=cookie(req,A);if(token){const u=await auth('user',null,token);if(u.ok&&u.data.id&&u.data.email_confirmed_at)return {user:u.data,token};}
+ const refresh=cookie(req,R);if(refresh){const s=await auth('token?grant_type=refresh_token',{refresh_token:refresh});if(s.ok&&s.data.access_token&&s.data.refresh_token){const u=await auth('user',null,s.data.access_token);if(u.ok&&u.data.id&&u.data.email_confirmed_at){cookies(res,s.data);return {user:u.data,token:s.data.access_token};}}}return null;}
+function redirect(res,to){res.statusCode=303;res.setHeader('Location',to);res.end();}
+async function handler(req,res){res.setHeader('Cache-Control','private, no-store, max-age=0');res.setHeader('Vary','Cookie');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
+ const query=req.query||Object.fromEntries(new URL(req.url,'https://example.invalid').searchParams);const action=typeof query.action==='string'?query.action:'';
+ try{
+ if(req.method==='GET'&&action==='status'){const c=config();return json(res,200,{configured:!!(c.url&&c.key),emailReady:process.env.MEMBERSHIP_EMAIL_READY==='true'});}
+ if(req.method==='POST'){
+  // All state changes require same-origin JSON; no permissive CORS or URL tokens.
+  const expected='https://'+req.headers.host;if(req.headers.origin!==expected||!(req.headers['content-type']||'').startsWith('application/json'))return json(res,403,{error:'Please reload this page and try again.'});
+  let b=req.body;if(typeof b==='string'){if(b.length>16384)return json(res,413,{error:'Request too large.'});try{b=JSON.parse(b);}catch{return json(res,400,{error:'Invalid request.'});}}if(!b||Array.isArray(b)||typeof b!=='object')return json(res,400,{error:'Invalid request.'});if(JSON.stringify(b).length>16384)return json(res,413,{error:'Request too large.'});
+  if(action==='logout'){const token=cookie(req,A);if(token){try{await auth('logout?scope=local',{},token);}catch{}}cookies(res,null);return json(res,200,{ok:true});}
+  const c=config();if(!c.url||!c.key)return json(res,503,{error:'Account setup is not complete yet. Please use the free samples for now.'});
+  if(['signup','recover'].includes(action)&&process.env.MEMBERSHIP_EMAIL_READY!=='true')return json(res,503,{error:'Email verification is being connected. Free samples are available while account registration is prepared.'});
+  if(['login','signup','recover'].includes(action)&&(!(typeof b.email==='string')||b.email.length>254||!/^\S+@\S+\.\S+$/.test(b.email)))return json(res,400,{error:'Enter a valid email address.'});
+  if(['login','signup','password'].includes(action)&&(!(typeof b.password==='string')||b.password.length>128||(action!=='login'&&b.password.length<12)||!b.password.length))return json(res,400,{error:'Use a password of 12–128 characters.'});
+  if(action==='signup'){const result=await auth('signup?redirect_to='+encodeURIComponent(expected+'/auth/complete/'),{email:b.email.trim(),password:b.password});if(!result.ok)return json(res,result.status===429?429:400,{error:result.status===429?'Too many attempts. Please wait before trying again.':'Unable to create your account. Check your details or try signing in.'});return json(res,200,{message:'Check your inbox for a verification link. If you already have an account, sign in or reset your password.'});}
+  if(action==='recover'){const result=await auth('recover?redirect_to='+encodeURIComponent(expected+'/auth/complete/?mode=recovery'),{email:b.email.trim()});if(result.status===429)return json(res,429,{error:'Too many attempts. Please wait before trying again.'});if(result.status>=500)return json(res,503,{error:'Email service unavailable. Please try again later.'});return json(res,200,{message:'If an account exists for that email, a password-reset link will arrive shortly.'});}
+  if(action==='login'){const s=await auth('token?grant_type=password',{email:b.email.trim(),password:b.password});if(!s.ok||!s.data.access_token||!s.data.refresh_token)return json(res,s.status===429?429:401,{error:s.status===429?'Too many attempts. Please wait before trying again.':'Unable to sign in. Check your email and password, and verify your email first.'});cookies(res,s.data);return json(res,200,{ok:true});}
+  if(action==='complete'){if(typeof b.refresh_token!=='string'||b.refresh_token.length>4096)return json(res,400,{error:'This link is invalid or has expired.'});const s=await auth('token?grant_type=refresh_token',{refresh_token:b.refresh_token});if(!s.ok||!s.data.access_token||!s.data.refresh_token)return json(res,401,{error:'This link is invalid or has expired. Please request a new one.'});const u=await auth('user',null,s.data.access_token);if(!u.ok||!u.data.id||!u.data.email_confirmed_at)return json(res,401,{error:'Unable to verify this account.'});cookies(res,s.data);return json(res,200,{ok:true});}
+  if(action==='password'){const s=await session(req,res);if(!s)return json(res,401,{error:'Please open a fresh password-reset link or sign in again.'});const updated=await auth('user',{password:b.password},s.token,'PUT');if(!updated.ok)return json(res,400,{error:'Unable to change the password. Please try a different password or request a new link.'});return json(res,200,{message:'Password updated. You can now open the trainer.'});}
+  return json(res,404,{error:'Unknown action.'});
+ }
+ if(req.method!=='GET'&&req.method!=='HEAD'){res.setHeader('Allow','GET, HEAD, POST');return json(res,405,{error:'Method not allowed.'});}
+ const asset=typeof query.asset==='string'?query.asset:'';if(!Object.hasOwn(files,asset))return json(res,404,{error:'Not found.'});
+ const s=await session(req,res);if(!s){if(asset.endsWith('/')||asset.endsWith('.html'))return redirect(res,'/log-in/?next='+encodeURIComponent(asset.startsWith('atlas/')?'/atlas/':'/trainer/'));return json(res,401,{error:'Sign in to access the full learning library.'});}
+ const file=files[asset];let content=fs.readFileSync(path.join(__dirname,file),'utf8');
+ if(file==='app.js')content=content.replace("const KEY = 'culture-bench-progress-v1';","const KEY = 'culture-bench-progress-v1-'+window.DM_USER_ID;");
+ if(file==='atlas.js')content=content.replaceAll('diagnosticmicro-atlas-saved-v3','diagnosticmicro-atlas-saved-v3-'+s.user.id).replaceAll('href="/"','href="/trainer/"');
+ if(file==='atlas-index.html')content=content.replaceAll('href="/"','href="/trainer/"').replaceAll('href="../"','href="/trainer/"');
+ if(file.endsWith('.html')){const id=JSON.stringify(s.user.id).replaceAll('<','\\u003c');content=content.replace('</head>',`<script>window.DM_USER_ID=${id};</script><script src="/member-nav.js" defer></script></head>`);}
+ const type=file.endsWith('.html')?'text/html':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'image/svg+xml';res.setHeader('Content-Type',type+'; charset=utf-8');res.statusCode=200;res.end(req.method==='HEAD'?'':content);
+ }catch{json(res,503,{error:'The account service is temporarily unavailable. Please try again shortly.'});}
+}
+module.exports=handler;

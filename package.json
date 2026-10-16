@@ -1,10 +1,10 @@
 {
   "name": "diagnosticmicro",
   "private": true,
-  "version": "3.0.0",
+  "version": "4.0.0-preview",
   "scripts": {
     "build": "node build.cjs",
-    "test": "node build.cjs && node atlas.test.cjs"
+    "test": "node build.cjs && node members.test.cjs"
   },
   "devDependencies": {
     "linkedom": "0.18.13"
